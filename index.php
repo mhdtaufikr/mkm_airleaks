@@ -687,10 +687,21 @@ try {
             }
         }
     </script>
+    <style>
+        @media (min-width: 1280px) {
+            .audit-fields input,
+            .audit-fields select {
+                margin-top: 0.375rem;
+                padding-top: 0.55rem;
+                padding-bottom: 0.55rem;
+                font-size: 0.875rem;
+            }
+        }
+    </style>
 </head>
 <body class="min-h-screen bg-slate-50 text-slate-800 antialiased">
-    <main class="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-2 py-3 sm:px-4 sm:py-4">
-        <section class="mb-3 border border-slate-200 bg-white p-3 sm:p-4">
+    <main class="flex min-h-screen w-full max-w-none flex-col px-1 py-2 sm:px-2 sm:py-2">
+        <section class="mb-2 border border-slate-200 bg-white p-2 sm:p-3">
             <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                 <div class="flex items-center gap-4">
                     <img src="MKM.png" alt="MKM" class="h-11 w-11 border border-slate-200 bg-white object-contain p-1.5 sm:h-12 sm:w-12">
@@ -750,9 +761,9 @@ try {
             </div>
         <?php endif; ?>
 
-        <form id="audit-form" method="post" enctype="multipart/form-data" class="border border-slate-200 bg-white p-3 sm:p-4">
+        <form id="audit-form" method="post" enctype="multipart/form-data" class="border border-slate-200 bg-white p-2 sm:p-3">
             <input type="hidden" name="form_type" value="audit">
-            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div class="audit-fields grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 <label class="block">
                     <span class="text-sm font-medium text-slate-700">Date Audit</span>
                     <input type="date" name="date_audit" value="<?= h($old['date_audit']) ?>" class="mt-2 w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-base text-slate-950 outline-none transition focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-500/20">
@@ -805,7 +816,7 @@ try {
                     <?php if (isset($errors['loss_cost'])): ?><span class="mt-1 block text-sm text-red-600"><?= h($errors['loss_cost']) ?></span><?php endif; ?>
                 </label>
 
-                <label class="block">
+                <label class="block xl:col-span-3">
                     <span class="text-sm font-medium text-slate-700">Leak Location <span class="text-red-500">*</span></span>
                     <input type="text" name="leak_location" value="<?= h($old['leak_location']) ?>" placeholder="Contoh: Joint hose bagian belakang" class="mt-2 w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-base text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-500/20">
                     <?php if (isset($errors['leak_location'])): ?><span class="mt-1 block text-sm text-red-600"><?= h($errors['leak_location']) ?></span><?php endif; ?>
@@ -818,17 +829,17 @@ try {
                 </label>
             </div>
 
-            <div class="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
                 <?php foreach ($fields as $name => [$label, $hint]): ?>
-                    <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 shadow-sm" data-photo-field="<?= h($name) ?>">
-                        <div class="mb-3">
+                    <div class="border border-slate-200 bg-slate-50 p-2.5" data-photo-field="<?= h($name) ?>">
+                        <div class="mb-2">
                             <p class="text-sm font-semibold text-slate-950"><?= h($label) ?></p>
                             <p class="text-xs text-slate-500"><?= h($hint) ?>. Bisa lebih dari satu foto, maksimal 20 MB/foto.</p>
                         </div>
                         <div data-gallery="<?= h($name) ?>" class="mb-3 grid grid-cols-2 gap-2"></div>
-                        <label for="<?= h($name) ?>" class="flex min-h-32 cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-primary-300 bg-white p-3 text-center transition hover:border-primary-500 hover:bg-primary-50">
-                            <span class="grid h-12 w-12 place-items-center rounded-full bg-primary-100 text-2xl text-primary-700">+</span>
-                            <span class="mt-2 text-sm font-semibold text-slate-600">Tambah foto</span>
+                        <label for="<?= h($name) ?>" class="flex min-h-28 cursor-pointer flex-col items-center justify-center border border-dashed border-primary-300 bg-white p-2 text-center transition hover:border-primary-500 hover:bg-primary-50 xl:min-h-20">
+                            <span class="grid h-9 w-9 place-items-center rounded-full bg-primary-100 text-xl text-primary-700">+</span>
+                            <span class="mt-1 text-xs font-semibold text-slate-600">Tambah foto</span>
                             <span data-count="<?= h($name) ?>" class="mt-1 text-xs text-slate-400">0 foto</span>
                         </label>
                         <input id="<?= h($name) ?>" type="file" name="<?= h($name) ?>[]" accept="image/*" capture="environment" multiple class="sr-only" data-file-input="<?= h($name) ?>">
@@ -838,22 +849,22 @@ try {
                 <?php endforeach; ?>
             </div>
 
-            <div class="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-                <button type="reset" class="rounded-md border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">Reset</button>
-                <button id="submit-button" type="submit" class="rounded-md bg-primary-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-sky-200 transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-slate-400 disabled:shadow-none focus:outline-none focus:ring-2 focus:ring-primary-400 focus:ring-offset-2 focus:ring-offset-white">Simpan Audit</button>
+            <div class="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button type="reset" class="border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50">Reset</button>
+                <button id="submit-button" type="submit" class="bg-primary-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:ring-offset-2 focus:ring-offset-white">Simpan Audit</button>
             </div>
         </form>
 
-        <section id="answer-finding" class="mt-4 border border-amber-200 bg-white p-3 sm:p-4">
-            <div class="mb-5">
+        <section id="answer-finding" class="mt-2 border border-amber-200 bg-white p-2 sm:p-3">
+            <div class="mb-3">
                 <p class="text-xs font-semibold uppercase tracking-[0.2em] text-amber-600">Follow Up</p>
-                <h2 class="mt-2 text-xl font-bold text-slate-950">Jawab Temuan</h2>
-                <p class="mt-1 text-sm text-slate-500">Masukkan nomor pada tag, action yang dilakukan, foto hasil perbaikan, dan nama PIC.</p>
+                <h2 class="mt-1 text-lg font-bold text-slate-950">Jawab Temuan</h2>
+                <p class="mt-0.5 text-xs text-slate-500">Masukkan nomor pada tag, action yang dilakukan, foto hasil perbaikan, dan nama PIC.</p>
             </div>
 
             <form id="action-form" method="post" enctype="multipart/form-data">
                 <input type="hidden" name="form_type" value="action">
-                <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
                     <label class="block">
                         <span class="text-sm font-medium text-slate-700">No. Temuan <span class="text-red-500">*</span></span>
                         <input type="text" name="finding_no" value="<?= h($oldAction['finding_no']) ?>" maxlength="4" minlength="4" autocomplete="off" autocapitalize="characters" placeholder="Contoh: A7K2" class="mt-2 w-full rounded-md border border-amber-200 bg-amber-50 px-3 py-3 font-mono text-xl font-bold uppercase tracking-[0.2em] text-slate-950 outline-none transition placeholder:text-base placeholder:font-normal placeholder:tracking-normal placeholder:text-slate-400 focus:border-amber-400 focus:bg-white focus:ring-2 focus:ring-amber-500/20">
@@ -895,7 +906,7 @@ try {
             </form>
         </section>
 
-        <section id="data-audit" class="mt-4 border border-slate-200 bg-white p-3 sm:p-4">
+        <section id="data-audit" class="mt-2 border border-slate-200 bg-white p-2">
             <div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h2 class="text-base font-bold text-slate-950">Data Audit</h2>
@@ -987,7 +998,7 @@ try {
                                 </div>
                             </details>
                             <div class="flex gap-1.5 border-t border-slate-200 p-2.5">
-                                <?php if (!empty($audit['finding_no'])): ?>
+                                <?php if (!$isClosed && !empty($audit['finding_no'])): ?>
                                     <a href="?answer=<?= rawurlencode((string)$audit['finding_no']) ?>#answer-finding" class="inline-flex flex-1 items-center justify-center border border-amber-300 bg-amber-50 px-2 py-2 text-xs font-bold text-amber-700">Jawab</a>
                                 <?php endif; ?>
                                 <button type="button" data-edit-audit='<?= h(editAuditPayload($audit)) ?>' class="inline-flex flex-1 items-center justify-center border border-sky-300 bg-sky-50 px-2 py-2 text-xs font-bold text-sky-700">Edit</button>
@@ -1001,12 +1012,12 @@ try {
                     <table class="w-full table-fixed border-collapse text-left text-xs">
                         <colgroup>
                             <col class="w-[12%]">
-                            <col class="w-[18%]">
+                            <col class="w-[17%]">
                             <col class="w-[14%]">
                             <col class="w-[15%]">
                             <col class="w-[16%]">
                             <col class="w-[17%]">
-                            <col class="w-[8%]">
+                            <col class="w-[9%]">
                         </colgroup>
                         <thead>
                             <tr class="border-b border-slate-300 bg-slate-100 text-[11px] font-bold uppercase tracking-wide text-slate-600">
@@ -1067,7 +1078,7 @@ try {
                                     </td>
                                     <td class="px-2 py-2 text-slate-700">
                                         <?php if (!empty($audit['action_taken'])): ?>
-                                            <p class="max-h-12 overflow-hidden whitespace-pre-wrap"><?= h((string)$audit['action_taken']) ?></p>
+                                            <p class="max-h-8 overflow-hidden whitespace-pre-wrap"><?= h((string)$audit['action_taken']) ?></p>
                                             <p class="mt-1 text-[10px] text-slate-500"><?= h((string)$audit['action_pic']) ?> · <?= h((string)$audit['action_created_at']) ?></p>
                                             <?php $actionPaths = imagePaths($audit['action_picture'] ?? null); ?>
                                             <?php if ($actionPaths): ?><a href="<?= h($actionPaths[0]) ?>" target="_blank" class="mt-1 inline-block text-[10px] font-bold text-primary-700">Foto perbaikan</a><?php endif; ?>
@@ -1075,22 +1086,30 @@ try {
                                             <span class="text-[11px] text-slate-400">Belum dijawab</span>
                                         <?php endif; ?>
                                     </td>
-                                    <td class="px-1.5 py-2 text-center">
-                                        <?php if (!empty($audit['finding_no'])): ?>
-                                            <a href="?answer=<?= rawurlencode((string)$audit['finding_no']) ?>#answer-finding" class="mb-1 block border border-amber-300 bg-amber-50 px-1 py-1.5 text-[10px] font-bold text-amber-700">Jawab</a>
-                                        <?php endif; ?>
-                                        <button
-                                            type="button"
-                                            data-edit-audit='<?= h(editAuditPayload($audit)) ?>'
-                                            class="mb-1 block w-full border border-sky-300 bg-sky-50 px-1 py-1.5 text-[10px] font-bold text-sky-700 hover:bg-sky-100"
-                                        >Edit</button>
-                                        <button
-                                            type="button"
-                                            data-delete-audit
-                                            data-audit-id="<?= h((string)$audit['id']) ?>"
-                                            data-finding-no="<?= h((string)($audit['finding_no'] ?? 'Data lama')) ?>"
-                                            class="block w-full border border-red-300 bg-red-50 px-1 py-1.5 text-[10px] font-bold text-red-700 hover:bg-red-100"
-                                        >Hapus</button>
+                                    <td class="px-1 py-2 text-center">
+                                        <div class="flex items-center justify-center gap-1">
+                                            <?php if (!$isClosed && !empty($audit['finding_no'])): ?>
+                                                <a href="?answer=<?= rawurlencode((string)$audit['finding_no']) ?>#answer-finding" title="Jawab temuan" aria-label="Jawab temuan <?= h((string)$audit['finding_no']) ?>" class="inline-flex h-7 w-7 items-center justify-center border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100">
+                                                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 17 4 12l5-5"/><path d="M4 12h10a6 6 0 0 1 6 6v1"/></svg>
+                                                </a>
+                                            <?php endif; ?>
+                                            <button
+                                                type="button"
+                                                data-edit-audit='<?= h(editAuditPayload($audit)) ?>'
+                                                title="Edit temuan"
+                                                aria-label="Edit temuan <?= h((string)($audit['finding_no'] ?? '')) ?>"
+                                                class="inline-flex h-7 w-7 items-center justify-center border border-sky-300 bg-sky-50 text-sky-700 hover:bg-sky-100"
+                                            ><svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg></button>
+                                            <button
+                                                type="button"
+                                                data-delete-audit
+                                                data-audit-id="<?= h((string)$audit['id']) ?>"
+                                                data-finding-no="<?= h((string)($audit['finding_no'] ?? 'Data lama')) ?>"
+                                                title="Hapus temuan"
+                                                aria-label="Hapus temuan <?= h((string)($audit['finding_no'] ?? '')) ?>"
+                                                class="inline-flex h-7 w-7 items-center justify-center border border-red-300 bg-red-50 text-red-700 hover:bg-red-100"
+                                            ><svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></svg></button>
+                                        </div>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
