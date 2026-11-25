@@ -1,0 +1,14 @@
+# Environment & credentials
+.env
+.env.*
+!.env.example
+
+# Runtime and uploaded files
+/uploads/*
+!/uploads/.gitkeep
+
+# Logs and backups
+*.log
+*.bak
+*.sql
+*.zip
