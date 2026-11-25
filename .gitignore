@@ -7,6 +7,9 @@
 /uploads/*
 !/uploads/.gitkeep
 
+/config/database.php
+/uploads/
+
 # Logs and backups
 *.log
 *.bak
