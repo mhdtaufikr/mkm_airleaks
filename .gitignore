@@ -14,4 +14,5 @@
 *.log
 *.bak
 *.sql
+!migrations/2026_11_25_000007_normalize_loss_cost_thousands.sql
 *.zip

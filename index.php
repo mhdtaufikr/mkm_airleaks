@@ -13,6 +13,7 @@ $errors = [];
 $auditSaved = isset($_GET['saved']) && $_GET['saved'] === '1';
 $actionSaved = isset($_GET['action_saved']) && $_GET['action_saved'] === '1';
 $auditDeleted = isset($_GET['deleted']) && $_GET['deleted'] === '1';
+$auditUpdated = isset($_GET['updated']) && $_GET['updated'] === '1';
 $savedFindingNo = strtoupper(trim((string)($_GET['finding_no'] ?? '')));
 $savedFindingNo = preg_match('/^[A-Z0-9]{4}$/', $savedFindingNo) ? $savedFindingNo : '';
 $old = [
@@ -36,6 +37,35 @@ $oldAction = [
 function h(string $value): string
 {
     return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+}
+
+function normalizeLossCost(string $value): string
+{
+    if ($value === '' || !is_numeric($value)) {
+        return $value;
+    }
+
+    $cost = (float)$value;
+    if ($cost >= 1 && $cost < 1000) {
+        $cost *= 1000;
+    }
+
+    return number_format($cost, 2, '.', '');
+}
+
+function editAuditPayload(array $audit): string
+{
+    $fields = [
+        'id', 'finding_no', 'date_audit', 'member', 'plant', 'line', 'machine_no',
+        'pic_dept', 'loss_flow', 'loss_cost', 'leak_location', 'co2',
+    ];
+    $payload = [];
+
+    foreach ($fields as $field) {
+        $payload[$field] = (string)($audit[$field] ?? '');
+    }
+
+    return (string)json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
 
 function uploadFolder(): array
@@ -277,6 +307,87 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $errors['delete'] = 'Data temuan gagal dihapus. Detail: ' . $e->getMessage();
             }
         }
+    } elseif ($formType === 'edit') {
+        $auditId = filter_var($_POST['audit_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        $editPassword = (string)($_POST['edit_password'] ?? '');
+        $editValues = [];
+        foreach (array_keys($old) as $field) {
+            $editValues[$field] = trim((string)($_POST[$field] ?? ''));
+        }
+
+        $requiredFields = [
+            'date_audit' => 'Date Audit wajib diisi.',
+            'member' => 'Member wajib diisi.',
+            'plant' => 'Plant wajib dipilih.',
+            'line' => 'Line wajib diisi.',
+            'machine_no' => 'Machine No wajib diisi.',
+            'pic_dept' => 'PIC Dept wajib diisi.',
+            'loss_flow' => 'Loss Flow wajib diisi.',
+            'loss_cost' => 'Loss Cost wajib diisi.',
+            'leak_location' => 'Leak Location wajib diisi.',
+            'co2' => 'CO2 wajib diisi.',
+        ];
+
+        if ($auditId === false) {
+            $errors['edit'] = 'Data temuan yang akan diedit tidak valid.';
+        } elseif (!hash_equals(DELETE_PASSWORD, $editPassword)) {
+            $errors['edit'] = 'Password edit salah.';
+        }
+        foreach ($requiredFields as $field => $message) {
+            if ($editValues[$field] === '') {
+                $errors['edit'] = $message;
+                break;
+            }
+        }
+        if (!in_array($editValues['plant'], ['MKM-1', 'MKM-2'], true)) {
+            $errors['edit'] = 'Plant harus MKM-1 atau MKM-2.';
+        } elseif (!is_numeric($editValues['loss_flow']) || (float)$editValues['loss_flow'] < 0) {
+            $errors['edit'] = 'Loss Flow harus angka 0 atau lebih.';
+        } elseif (!is_numeric($editValues['loss_cost']) || (float)$editValues['loss_cost'] < 0) {
+            $errors['edit'] = 'Loss Cost harus angka 0 atau lebih.';
+        } elseif (!is_numeric($editValues['co2']) || (float)$editValues['co2'] < 0) {
+            $errors['edit'] = 'CO2 harus angka 0 atau lebih.';
+        }
+
+        if (!$errors) {
+            try {
+                $editValues['loss_cost'] = normalizeLossCost($editValues['loss_cost']);
+                $pdo = db();
+                $update = $pdo->prepare(
+                    'UPDATE air_leak_audits
+                     SET date_audit = :date_audit, member = :member, plant = :plant, line = :line,
+                         machine_no = :machine_no, pic_dept = :pic_dept, loss_flow = :loss_flow,
+                         loss_cost = :loss_cost, leak_location = :leak_location, co2 = :co2
+                     WHERE id = :id'
+                );
+                $update->execute([
+                    'date_audit' => $editValues['date_audit'],
+                    'member' => $editValues['member'],
+                    'plant' => $editValues['plant'],
+                    'line' => $editValues['line'],
+                    'machine_no' => $editValues['machine_no'],
+                    'pic_dept' => $editValues['pic_dept'],
+                    'loss_flow' => $editValues['loss_flow'],
+                    'loss_cost' => $editValues['loss_cost'],
+                    'leak_location' => $editValues['leak_location'],
+                    'co2' => $editValues['co2'],
+                    'id' => $auditId,
+                ]);
+
+                if ($update->rowCount() === 0) {
+                    $exists = $pdo->prepare('SELECT COUNT(*) FROM air_leak_audits WHERE id = :id');
+                    $exists->execute(['id' => $auditId]);
+                    if (!(int)$exists->fetchColumn()) {
+                        throw new RuntimeException('Data temuan tidak ditemukan.');
+                    }
+                }
+
+                header('Location: index.php?updated=1', true, 303);
+                exit;
+            } catch (Throwable $e) {
+                $errors['edit'] = 'Data temuan gagal diedit. Detail: ' . $e->getMessage();
+            }
+        }
     } elseif ($formType === 'action') {
         foreach ($oldAction as $key => $default) {
             $oldAction[$key] = trim((string)($_POST[$key] ?? $default));
@@ -373,6 +484,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if ($old['co2'] !== '' && (!is_numeric($old['co2']) || (float)$old['co2'] < 0)) {
             $errors['co2'] = 'CO₂ harus angka 0 atau lebih.';
+        }
+
+        if (!isset($errors['loss_cost'])) {
+            $old['loss_cost'] = normalizeLossCost($old['loss_cost']);
         }
 
         $machinePicture = saveDataUrlImages('machine_picture', $errors);
@@ -533,9 +648,21 @@ try {
             </div>
         <?php endif; ?>
 
+        <?php if ($auditUpdated): ?>
+            <div class="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">
+                Data temuan berhasil diperbarui.
+            </div>
+        <?php endif; ?>
+
         <?php if (isset($errors['delete'])): ?>
             <div class="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
                 <?= h($errors['delete']) ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if (isset($errors['edit'])): ?>
+            <div class="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
+                <?= h($errors['edit']) ?> Silakan buka Edit dan coba lagi.
             </div>
         <?php endif; ?>
 
@@ -595,7 +722,8 @@ try {
 
                 <label class="block">
                     <span class="text-sm font-medium text-slate-700">Loss Cost (IDR) <span class="text-red-500">*</span></span>
-                    <input type="number" name="loss_cost" value="<?= h($old['loss_cost']) ?>" min="0" step="1" inputmode="numeric" placeholder="Enter your answer" class="mt-2 w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-base text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-500/20">
+                    <input type="number" name="loss_cost" value="<?= h($old['loss_cost']) ?>" min="0" step="1" inputmode="numeric" placeholder="Contoh: 20 menjadi Rp20.000" data-loss-cost class="mt-2 w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-base text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-500/20">
+                    <span class="mt-1 block text-xs text-slate-500">Input di bawah 1.000 otomatis dianggap ribuan. Contoh: 20 = Rp20.000.</span>
                     <?php if (isset($errors['loss_cost'])): ?><span class="mt-1 block text-sm text-red-600"><?= h($errors['loss_cost']) ?></span><?php endif; ?>
                 </label>
 
@@ -705,7 +833,66 @@ try {
                     Belum ada data audit.
                 </div>
             <?php else: ?>
-                <div class="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+                <div class="grid gap-4 lg:hidden">
+                    <?php foreach ($audits as $audit): ?>
+                        <?php $isClosed = ($audit['status'] ?? 'OPEN') === 'CLOSED'; ?>
+                        <article class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+                            <div class="flex items-start justify-between gap-3 border-b border-slate-100 bg-slate-50 p-4">
+                                <div>
+                                    <p class="font-mono text-xl font-black tracking-wider text-primary-700"><?= h((string)($audit['finding_no'] ?? '-')) ?></p>
+                                    <p class="mt-1 text-xs text-slate-500"><?= h((string)$audit['date_audit']) ?> · <?= h((string)$audit['plant']) ?></p>
+                                </div>
+                                <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-bold <?= $isClosed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700' ?>">
+                                    <?= $isClosed ? 'Closed' : 'Open' ?>
+                                </span>
+                            </div>
+                            <div class="grid grid-cols-2 gap-x-4 gap-y-3 p-4 text-sm">
+                                <div><p class="text-xs text-slate-400">Member</p><p class="font-medium text-slate-700"><?= h((string)$audit['member']) ?></p></div>
+                                <div><p class="text-xs text-slate-400">PIC Dept</p><p class="font-medium text-slate-700"><?= h((string)$audit['pic_dept']) ?></p></div>
+                                <div><p class="text-xs text-slate-400">Line</p><p class="font-medium text-slate-700"><?= h((string)$audit['line']) ?></p></div>
+                                <div><p class="text-xs text-slate-400">Machine</p><p class="font-medium text-slate-700"><?= h((string)$audit['machine_no']) ?></p></div>
+                                <div><p class="text-xs text-slate-400">Loss Flow</p><p class="font-semibold text-slate-800"><?= h(number_format((float)$audit['loss_flow'], 2)) ?></p></div>
+                                <div><p class="text-xs text-slate-400">Loss Cost</p><p class="font-semibold text-slate-800">Rp <?= h(number_format((float)$audit['loss_cost'], 0, ',', '.')) ?></p></div>
+                                <div class="col-span-2"><p class="text-xs text-slate-400">Leak Location</p><p class="font-medium text-slate-700"><?= h((string)($audit['leak_location'] ?? '')) ?></p></div>
+                                <div><p class="text-xs text-slate-400">CO2</p><p class="font-medium text-slate-700"><?= h(number_format((float)($audit['co2'] ?? 0), 2)) ?></p></div>
+                                <div><p class="text-xs text-slate-400">Action Terakhir</p><p class="font-medium text-slate-700"><?= !empty($audit['action_taken']) ? h((string)$audit['action_taken']) : 'Belum dijawab' ?></p></div>
+                            </div>
+                            <details class="border-t border-slate-100 px-4 py-3">
+                                <summary class="cursor-pointer text-sm font-bold text-primary-700">Lihat foto &amp; detail follow up</summary>
+                                <div class="mt-3 grid grid-cols-3 gap-2">
+                                    <?php foreach (['machine_picture', 'leak_location_picture', 'air_leak_image'] as $imageField): ?>
+                                        <div>
+                                            <p class="mb-1 text-[11px] text-slate-400"><?= h($fields[$imageField][0]) ?></p>
+                                            <?php $mobilePaths = imagePaths($audit[$imageField] ?? null); ?>
+                                            <?php if ($mobilePaths): ?>
+                                                <a href="<?= h($mobilePaths[0]) ?>" target="_blank"><img src="<?= h($mobilePaths[0]) ?>" alt="" class="h-20 w-full rounded-md border border-slate-200 object-cover"></a>
+                                            <?php else: ?>
+                                                <div class="grid h-20 place-items-center rounded-md border border-dashed border-slate-200 text-xs text-slate-400">No image</div>
+                                            <?php endif; ?>
+                                        </div>
+                                    <?php endforeach; ?>
+                                </div>
+                                <div class="mt-3 rounded-md bg-slate-50 p-3 text-sm">
+                                    <p class="text-xs text-slate-400">PIC Action</p>
+                                    <p class="font-medium text-slate-700"><?= !empty($audit['action_pic']) ? h((string)$audit['action_pic']) : '-' ?></p>
+                                    <?php $mobileActionPaths = imagePaths($audit['action_picture'] ?? null); ?>
+                                    <?php if ($mobileActionPaths): ?>
+                                        <a href="<?= h($mobileActionPaths[0]) ?>" target="_blank" class="mt-2 inline-flex text-xs font-bold text-primary-700">Buka foto perbaikan</a>
+                                    <?php endif; ?>
+                                </div>
+                            </details>
+                            <div class="flex flex-col gap-2 border-t border-slate-100 p-4 min-[420px]:flex-row">
+                                <?php if (!empty($audit['finding_no'])): ?>
+                                    <a href="?answer=<?= rawurlencode((string)$audit['finding_no']) ?>#answer-finding" class="inline-flex flex-1 items-center justify-center rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm font-bold text-amber-700">Jawab</a>
+                                <?php endif; ?>
+                                <button type="button" data-edit-audit='<?= h(editAuditPayload($audit)) ?>' class="inline-flex flex-1 items-center justify-center rounded-md border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm font-bold text-sky-700">Edit</button>
+                                <button type="button" data-delete-audit data-audit-id="<?= h((string)$audit['id']) ?>" data-finding-no="<?= h((string)($audit['finding_no'] ?? 'Data lama')) ?>" class="inline-flex flex-1 items-center justify-center rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-sm font-bold text-red-700">Hapus</button>
+                            </div>
+                        </article>
+                    <?php endforeach; ?>
+                </div>
+
+                <div class="hidden overflow-x-auto lg:block">
                     <table class="min-w-[1960px] w-full border-collapse text-left text-sm">
                         <thead>
                             <tr class="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
@@ -799,6 +986,11 @@ try {
                                     <td class="px-3 py-3 text-center">
                                         <button
                                             type="button"
+                                            data-edit-audit='<?= h(editAuditPayload($audit)) ?>'
+                                            class="mb-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-bold text-sky-700 transition hover:border-sky-300 hover:bg-sky-100"
+                                        >Edit</button>
+                                        <button
+                                            type="button"
                                             data-delete-audit
                                             data-audit-id="<?= h((string)$audit['id']) ?>"
                                             data-finding-no="<?= h((string)($audit['finding_no'] ?? 'Data lama')) ?>"
@@ -838,6 +1030,43 @@ try {
             <?php endif; ?>
         </section>
     </main>
+
+    <div id="edit-modal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-950/70 p-2 backdrop-blur-sm sm:p-4">
+        <form method="post" id="edit-form" class="flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl sm:max-h-[calc(100dvh-2rem)]">
+            <input type="hidden" name="form_type" value="edit">
+            <input type="hidden" name="audit_id" id="edit-audit-id">
+            <div class="flex items-start justify-between gap-4 border-b border-slate-200 p-4 sm:p-5">
+                <div>
+                    <p class="text-lg font-bold text-slate-950">Edit Temuan <span id="edit-finding-no" class="font-mono text-primary-700"></span></p>
+                    <p class="mt-1 text-sm leading-5 text-slate-500">Foto, status, dan riwayat action tidak berubah.</p>
+                </div>
+                <button type="button" id="edit-modal-close" class="shrink-0 rounded-md border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">Tutup</button>
+            </div>
+            <div class="overflow-y-auto p-4 sm:p-5">
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    <label class="block"><span class="text-sm font-semibold text-slate-700">Date Audit</span><input id="edit-date-audit" type="date" name="date_audit" required class="mt-2 w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-base outline-none focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-500/20"></label>
+                    <label class="block"><span class="text-sm font-semibold text-slate-700">Member</span><input id="edit-member" type="text" name="member" required class="mt-2 w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-base outline-none focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-500/20"></label>
+                    <label class="block"><span class="text-sm font-semibold text-slate-700">Plant</span><select id="edit-plant" name="plant" required class="mt-2 w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-base outline-none focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-500/20"><option value="MKM-1">MKM-1</option><option value="MKM-2">MKM-2</option></select></label>
+                    <label class="block"><span class="text-sm font-semibold text-slate-700">Line</span><input id="edit-line" type="text" name="line" required class="mt-2 w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-base outline-none focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-500/20"></label>
+                    <label class="block"><span class="text-sm font-semibold text-slate-700">Machine No</span><input id="edit-machine-no" type="text" name="machine_no" required class="mt-2 w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-base outline-none focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-500/20"></label>
+                    <label class="block"><span class="text-sm font-semibold text-slate-700">PIC Dept</span><input id="edit-pic-dept" type="text" name="pic_dept" required class="mt-2 w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-base outline-none focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-500/20"></label>
+                    <label class="block"><span class="text-sm font-semibold text-slate-700">Loss Flow (m3/min)</span><input id="edit-loss-flow" type="number" name="loss_flow" min="0" step="0.01" inputmode="decimal" required class="mt-2 w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-base outline-none focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-500/20"></label>
+                    <label class="block"><span class="text-sm font-semibold text-slate-700">Loss Cost (IDR)</span><input id="edit-loss-cost" type="number" name="loss_cost" min="0" step="1" inputmode="numeric" required data-loss-cost class="mt-2 w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-base outline-none focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-500/20"><span class="mt-1 block text-xs text-slate-500">20 otomatis menjadi Rp20.000.</span></label>
+                    <label class="block"><span class="text-sm font-semibold text-slate-700">CO2</span><input id="edit-co2" type="number" name="co2" min="0" step="0.01" inputmode="decimal" required class="mt-2 w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-base outline-none focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-500/20"></label>
+                    <label class="block sm:col-span-2 lg:col-span-3"><span class="text-sm font-semibold text-slate-700">Leak Location</span><input id="edit-leak-location" type="text" name="leak_location" required class="mt-2 w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-base outline-none focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-500/20"></label>
+                </div>
+                <label class="mt-5 block rounded-lg border border-amber-200 bg-amber-50 p-3 sm:p-4">
+                    <span class="text-sm font-bold text-amber-900">Password Edit</span>
+                    <span class="mt-1 block text-xs text-amber-700">Gunakan password yang sama dengan Hapus.</span>
+                    <input id="edit-password" type="password" name="edit_password" required autocomplete="off" placeholder="Masukkan password" class="mt-2 w-full rounded-md border border-amber-200 bg-white px-3 py-3 text-base text-slate-950 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-500/20">
+                </label>
+            </div>
+            <div class="flex flex-col-reverse gap-2 border-t border-slate-200 p-4 sm:flex-row sm:justify-end sm:p-5">
+                <button type="button" id="edit-modal-cancel" class="rounded-md border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50">Batal</button>
+                <button type="submit" id="edit-submit-button" class="rounded-md bg-primary-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-sky-100 hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-slate-300">Simpan Perubahan</button>
+            </div>
+        </form>
+    </div>
 
     <div id="delete-modal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
         <form method="post" id="delete-form" class="w-full max-w-md rounded-lg bg-white p-5 shadow-2xl sm:p-6">
@@ -1207,7 +1436,19 @@ try {
             }, 0);
         });
 
+        function normalizeLossCostInput(input) {
+            const value = Number(input.value);
+            if (Number.isFinite(value) && value >= 1 && value < 1000) {
+                input.value = String(Math.round(value * 1000));
+            }
+        }
+
+        document.querySelectorAll('[data-loss-cost]').forEach((input) => {
+            input.addEventListener('blur', () => normalizeLossCostInput(input));
+        });
+
         document.getElementById('audit-form').addEventListener('submit', () => {
+            normalizeLossCostInput(document.querySelector('#audit-form [data-loss-cost]'));
             const submitButton = document.getElementById('submit-button');
             submitButton.disabled = true;
             submitButton.textContent = 'Menyimpan...';
@@ -1219,6 +1460,65 @@ try {
 
         document.getElementById('action-form').addEventListener('submit', () => {
             const submitButton = document.getElementById('action-submit-button');
+            submitButton.disabled = true;
+            submitButton.textContent = 'Menyimpan...';
+        });
+
+        const editModal = document.getElementById('edit-modal');
+        const editForm = document.getElementById('edit-form');
+        const editPassword = document.getElementById('edit-password');
+        const editFieldIds = {
+            date_audit: 'edit-date-audit',
+            member: 'edit-member',
+            plant: 'edit-plant',
+            line: 'edit-line',
+            machine_no: 'edit-machine-no',
+            pic_dept: 'edit-pic-dept',
+            loss_flow: 'edit-loss-flow',
+            loss_cost: 'edit-loss-cost',
+            leak_location: 'edit-leak-location',
+            co2: 'edit-co2'
+        };
+
+        function closeEditModal() {
+            editModal.classList.add('hidden');
+            editModal.classList.remove('flex');
+            editForm.reset();
+            document.getElementById('edit-audit-id').value = '';
+            document.body.classList.remove('overflow-hidden');
+        }
+
+        document.querySelectorAll('[data-edit-audit]').forEach((button) => {
+            button.addEventListener('click', () => {
+                let audit;
+                try {
+                    audit = JSON.parse(button.dataset.editAudit);
+                } catch (error) {
+                    window.alert('Data edit tidak dapat dibuka. Silakan refresh halaman.');
+                    return;
+                }
+
+                document.getElementById('edit-audit-id').value = audit.id;
+                document.getElementById('edit-finding-no').textContent = audit.finding_no || '-';
+                Object.entries(editFieldIds).forEach(([field, id]) => {
+                    document.getElementById(id).value = audit[field] ?? '';
+                });
+                editPassword.value = '';
+                editModal.classList.remove('hidden');
+                editModal.classList.add('flex');
+                document.body.classList.add('overflow-hidden');
+                window.setTimeout(() => document.getElementById('edit-member').focus(), 50);
+            });
+        });
+
+        document.getElementById('edit-modal-close').addEventListener('click', closeEditModal);
+        document.getElementById('edit-modal-cancel').addEventListener('click', closeEditModal);
+        editModal.addEventListener('click', (event) => {
+            if (event.target === editModal) closeEditModal();
+        });
+        editForm.addEventListener('submit', () => {
+            normalizeLossCostInput(document.getElementById('edit-loss-cost'));
+            const submitButton = document.getElementById('edit-submit-button');
             submitButton.disabled = true;
             submitButton.textContent = 'Menyimpan...';
         });
@@ -1257,6 +1557,12 @@ try {
             const submitButton = document.getElementById('delete-submit-button');
             submitButton.disabled = true;
             submitButton.textContent = 'Menghapus...';
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key !== 'Escape') return;
+            if (!editModal.classList.contains('hidden')) closeEditModal();
+            if (!deleteModal.classList.contains('hidden')) closeDeleteModal();
         });
     </script>
 </body>
