@@ -68,6 +68,17 @@ function editAuditPayload(array $audit): string
     return (string)json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
 
+function validDateFilter(string $value): bool
+{
+    $date = DateTimeImmutable::createFromFormat('!Y-m-d', $value);
+    return $date !== false && $date->format('Y-m-d') === $value;
+}
+
+function auditPageUrl(int $page, array $filters): string
+{
+    return '?' . http_build_query(array_merge($filters, ['page' => $page]));
+}
+
 function uploadFolder(): array
 {
     $folder = 'uploads/airleak/' . date('Y/m');
@@ -551,8 +562,70 @@ $fields = [
 try {
     $perPage = 10;
     $currentPage = max(1, (int)($_GET['page'] ?? 1));
+    $filterSearch = substr(trim((string)($_GET['q'] ?? '')), 0, 100);
+    $filterStatus = strtoupper(trim((string)($_GET['status'] ?? '')));
+    $filterPlant = strtoupper(trim((string)($_GET['plant'] ?? '')));
+    $filterDateFrom = trim((string)($_GET['date_from'] ?? ''));
+    $filterDateTo = trim((string)($_GET['date_to'] ?? ''));
+
+    if (!in_array($filterStatus, ['OPEN', 'CLOSED'], true)) {
+        $filterStatus = '';
+    }
+    if (!in_array($filterPlant, ['MKM-1', 'MKM-2'], true)) {
+        $filterPlant = '';
+    }
+    if (!validDateFilter($filterDateFrom)) {
+        $filterDateFrom = '';
+    }
+    if (!validDateFilter($filterDateTo)) {
+        $filterDateTo = '';
+    }
+
+    $filterQuery = array_filter([
+        'q' => $filterSearch,
+        'status' => $filterStatus,
+        'plant' => $filterPlant,
+        'date_from' => $filterDateFrom,
+        'date_to' => $filterDateTo,
+    ], static fn(string $value): bool => $value !== '');
+    $hasActiveFilters = $filterQuery !== [];
+
     $pdo = db();
-    $totalAudits = (int)$pdo->query('SELECT COUNT(*) FROM air_leak_audits')->fetchColumn();
+    $fromSql = 'FROM air_leak_audits audit
+        LEFT JOIN air_leak_actions action ON action.id = (
+            SELECT MAX(latest_action.id)
+            FROM air_leak_actions latest_action
+            WHERE latest_action.air_leak_audit_id = audit.id
+        )';
+    $where = [];
+    $filterParams = [];
+
+    if ($filterSearch !== '') {
+        $where[] = "CONCAT_WS(' ', audit.finding_no, audit.member, audit.line, audit.machine_no,
+                    audit.pic_dept, audit.leak_location, action.action_taken, action.action_pic) LIKE :search";
+        $filterParams['search'] = '%' . $filterSearch . '%';
+    }
+    if ($filterStatus !== '') {
+        $where[] = 'audit.status = :status';
+        $filterParams['status'] = $filterStatus;
+    }
+    if ($filterPlant !== '') {
+        $where[] = 'audit.plant = :plant';
+        $filterParams['plant'] = $filterPlant;
+    }
+    if ($filterDateFrom !== '') {
+        $where[] = 'audit.date_audit >= :date_from';
+        $filterParams['date_from'] = $filterDateFrom;
+    }
+    if ($filterDateTo !== '') {
+        $where[] = 'audit.date_audit <= :date_to';
+        $filterParams['date_to'] = $filterDateTo;
+    }
+
+    $whereSql = $where ? ' WHERE ' . implode(' AND ', $where) : '';
+    $countStatement = $pdo->prepare('SELECT COUNT(*) ' . $fromSql . $whereSql);
+    $countStatement->execute($filterParams);
+    $totalAudits = (int)$countStatement->fetchColumn();
     $totalPages = max(1, (int)ceil($totalAudits / $perPage));
     $currentPage = min($currentPage, $totalPages);
     $offset = ($currentPage - 1) * $perPage;
@@ -561,15 +634,13 @@ try {
                 audit.machine_no, audit.pic_dept, audit.loss_flow, audit.loss_cost, audit.leak_location, audit.co2, audit.machine_picture,
                 audit.leak_location_picture, audit.air_leak_image, audit.status, audit.closed_at, audit.created_at,
                 action.action_taken, action.action_pic, action.action_picture, action.created_at AS action_created_at
-        FROM air_leak_audits audit
-        LEFT JOIN air_leak_actions action ON action.id = (
-            SELECT MAX(latest_action.id)
-            FROM air_leak_actions latest_action
-            WHERE latest_action.air_leak_audit_id = audit.id
-        )
+        ' . $fromSql . $whereSql . '
         ORDER BY audit.id DESC
         LIMIT :limit OFFSET :offset'
     );
+    foreach ($filterParams as $name => $value) {
+        $stmt->bindValue(':' . $name, $value);
+    }
     $stmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
     $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
     $stmt->execute();
@@ -581,6 +652,13 @@ try {
     $totalAudits = 0;
     $totalPages = 1;
     $offset = 0;
+    $filterSearch = '';
+    $filterStatus = '';
+    $filterPlant = '';
+    $filterDateFrom = '';
+    $filterDateTo = '';
+    $filterQuery = [];
+    $hasActiveFilters = false;
 }
 ?>
 <!doctype html>
@@ -611,15 +689,15 @@ try {
     </script>
 </head>
 <body class="min-h-screen bg-slate-50 text-slate-800 antialiased">
-    <main class="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-3 py-4 sm:px-6 sm:py-5 lg:px-8">
-        <section class="mb-5 rounded-lg border border-sky-100 bg-white p-4 shadow-xl shadow-sky-100/70 sm:p-6">
+    <main class="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-2 py-3 sm:px-4 sm:py-4">
+        <section class="mb-3 border border-slate-200 bg-white p-3 sm:p-4">
             <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                 <div class="flex items-center gap-4">
-                    <img src="MKM.png" alt="MKM" class="h-14 w-14 rounded-lg border border-slate-100 bg-white object-contain p-2 shadow-sm sm:h-16 sm:w-16">
+                    <img src="MKM.png" alt="MKM" class="h-11 w-11 border border-slate-200 bg-white object-contain p-1.5 sm:h-12 sm:w-12">
                     <div>
                         <p class="text-xs font-semibold uppercase tracking-[0.2em] text-primary-600">MKM Maintenance</p>
-                        <h1 class="mt-2 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">Air Leak Audit</h1>
-                        <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-500">Form audit mobile-friendly untuk catat mesin, PIC, dan foto temuan leak langsung dari kamera.</p>
+                        <h1 class="mt-1 text-xl font-bold tracking-tight text-slate-950 sm:text-2xl">Air Leak Audit</h1>
+                        <p class="mt-1 max-w-2xl text-xs leading-5 text-slate-500 sm:text-sm">Pencatatan temuan, foto, dan tindak lanjut kebocoran udara.</p>
                     </div>
                 </div>
                 <div class="rounded-md border border-primary-200 bg-primary-50 px-3 py-2 text-sm text-primary-700">
@@ -672,7 +750,7 @@ try {
             </div>
         <?php endif; ?>
 
-        <form id="audit-form" method="post" enctype="multipart/form-data" class="rounded-lg border border-slate-200 bg-white p-4 shadow-xl shadow-slate-200/70 sm:p-6">
+        <form id="audit-form" method="post" enctype="multipart/form-data" class="border border-slate-200 bg-white p-3 sm:p-4">
             <input type="hidden" name="form_type" value="audit">
             <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <label class="block">
@@ -766,7 +844,7 @@ try {
             </div>
         </form>
 
-        <section id="answer-finding" class="mt-6 rounded-lg border border-amber-200 bg-white p-4 shadow-xl shadow-amber-100/70 sm:p-6">
+        <section id="answer-finding" class="mt-4 border border-amber-200 bg-white p-3 sm:p-4">
             <div class="mb-5">
                 <p class="text-xs font-semibold uppercase tracking-[0.2em] text-amber-600">Follow Up</p>
                 <h2 class="mt-2 text-xl font-bold text-slate-950">Jawab Temuan</h2>
@@ -817,36 +895,63 @@ try {
             </form>
         </section>
 
-        <section class="mt-6 rounded-lg border border-slate-200 bg-white p-4 shadow-xl shadow-slate-200/70 sm:p-6">
-            <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <section id="data-audit" class="mt-4 border border-slate-200 bg-white p-3 sm:p-4">
+            <div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                    <h2 class="text-lg font-bold text-slate-950">Data Audit</h2>
-                    <p class="mt-1 text-sm text-slate-500">
-                        Menampilkan <?= $totalAudits ? h((string)($offset + 1)) : '0' ?>-<?= h((string)min($offset + $perPage, $totalAudits)) ?> dari <?= h((string)$totalAudits) ?> data.
+                    <h2 class="text-base font-bold text-slate-950">Data Audit</h2>
+                    <p class="mt-0.5 text-xs text-slate-500">
+                        <?= $totalAudits ? h((string)($offset + 1)) : '0' ?>-<?= h((string)min($offset + $perPage, $totalAudits)) ?> dari <?= h((string)$totalAudits) ?> data<?= $hasActiveFilters ? ' terfilter' : '' ?>.
                     </p>
                 </div>
-                <a href="export_excel.php" class="inline-flex items-center justify-center rounded-md bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-100 transition hover:bg-emerald-700">Export XLSX + Gambar</a>
+                <a href="export_excel.php" class="inline-flex items-center justify-center border border-emerald-700 bg-emerald-700 px-3 py-2 text-xs font-bold text-white transition hover:bg-emerald-800">Export XLSX</a>
             </div>
 
+            <form method="get" class="mb-3 grid grid-cols-2 gap-2 border border-slate-200 bg-slate-50 p-2 md:grid-cols-8">
+                <label class="col-span-2 md:col-span-2">
+                    <span class="sr-only">Cari data audit</span>
+                    <input type="search" name="q" value="<?= h($filterSearch) ?>" placeholder="Cari no, mesin, line, PIC, lokasi..." class="h-9 w-full border border-slate-300 bg-white px-2.5 text-xs text-slate-800 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500">
+                </label>
+                <label>
+                    <span class="sr-only">Status</span>
+                    <select name="status" class="h-9 w-full border border-slate-300 bg-white px-2 text-xs text-slate-700 outline-none focus:border-primary-500">
+                        <option value="">Semua Status</option>
+                        <option value="OPEN" <?= $filterStatus === 'OPEN' ? 'selected' : '' ?>>Open</option>
+                        <option value="CLOSED" <?= $filterStatus === 'CLOSED' ? 'selected' : '' ?>>Closed</option>
+                    </select>
+                </label>
+                <label>
+                    <span class="sr-only">Plant</span>
+                    <select name="plant" class="h-9 w-full border border-slate-300 bg-white px-2 text-xs text-slate-700 outline-none focus:border-primary-500">
+                        <option value="">Semua Plant</option>
+                        <option value="MKM-1" <?= $filterPlant === 'MKM-1' ? 'selected' : '' ?>>MKM-1</option>
+                        <option value="MKM-2" <?= $filterPlant === 'MKM-2' ? 'selected' : '' ?>>MKM-2</option>
+                    </select>
+                </label>
+                <label><span class="sr-only">Tanggal mulai</span><input type="date" name="date_from" value="<?= h($filterDateFrom) ?>" title="Tanggal mulai" class="h-9 w-full border border-slate-300 bg-white px-2 text-xs text-slate-700 outline-none focus:border-primary-500"></label>
+                <label><span class="sr-only">Tanggal akhir</span><input type="date" name="date_to" value="<?= h($filterDateTo) ?>" title="Tanggal akhir" class="h-9 w-full border border-slate-300 bg-white px-2 text-xs text-slate-700 outline-none focus:border-primary-500"></label>
+                <button type="submit" class="h-9 border border-primary-700 bg-primary-700 px-3 text-xs font-bold text-white hover:bg-primary-800">Filter</button>
+                <a href="index.php#data-audit" class="grid h-9 place-items-center border border-slate-300 bg-white px-3 text-xs font-bold text-slate-600 hover:bg-slate-100">Reset</a>
+            </form>
+
             <?php if (!$audits): ?>
-                <div class="rounded-md border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
-                    Belum ada data audit.
+                <div class="border border-dashed border-slate-300 bg-slate-50 p-5 text-center text-sm text-slate-500">
+                    <?= $hasActiveFilters ? 'Data tidak ditemukan. Coba ubah filter.' : 'Belum ada data audit.' ?>
                 </div>
             <?php else: ?>
-                <div class="grid gap-4 lg:hidden">
+                <div class="grid gap-2 lg:hidden">
                     <?php foreach ($audits as $audit): ?>
                         <?php $isClosed = ($audit['status'] ?? 'OPEN') === 'CLOSED'; ?>
-                        <article class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-                            <div class="flex items-start justify-between gap-3 border-b border-slate-100 bg-slate-50 p-4">
+                        <article class="overflow-hidden border border-slate-200 bg-white">
+                            <div class="flex items-start justify-between gap-2 border-b border-slate-200 bg-slate-50 p-3">
                                 <div>
-                                    <p class="font-mono text-xl font-black tracking-wider text-primary-700"><?= h((string)($audit['finding_no'] ?? '-')) ?></p>
+                                    <p class="font-mono text-base font-black tracking-wider text-primary-700"><?= h((string)($audit['finding_no'] ?? '-')) ?></p>
                                     <p class="mt-1 text-xs text-slate-500"><?= h((string)$audit['date_audit']) ?> · <?= h((string)$audit['plant']) ?></p>
                                 </div>
                                 <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-bold <?= $isClosed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700' ?>">
                                     <?= $isClosed ? 'Closed' : 'Open' ?>
                                 </span>
                             </div>
-                            <div class="grid grid-cols-2 gap-x-4 gap-y-3 p-4 text-sm">
+                            <div class="grid grid-cols-2 gap-x-3 gap-y-2 p-3 text-xs">
                                 <div><p class="text-xs text-slate-400">Member</p><p class="font-medium text-slate-700"><?= h((string)$audit['member']) ?></p></div>
                                 <div><p class="text-xs text-slate-400">PIC Dept</p><p class="font-medium text-slate-700"><?= h((string)$audit['pic_dept']) ?></p></div>
                                 <div><p class="text-xs text-slate-400">Line</p><p class="font-medium text-slate-700"><?= h((string)$audit['line']) ?></p></div>
@@ -857,8 +962,8 @@ try {
                                 <div><p class="text-xs text-slate-400">CO2</p><p class="font-medium text-slate-700"><?= h(number_format((float)($audit['co2'] ?? 0), 2)) ?></p></div>
                                 <div><p class="text-xs text-slate-400">Action Terakhir</p><p class="font-medium text-slate-700"><?= !empty($audit['action_taken']) ? h((string)$audit['action_taken']) : 'Belum dijawab' ?></p></div>
                             </div>
-                            <details class="border-t border-slate-100 px-4 py-3">
-                                <summary class="cursor-pointer text-sm font-bold text-primary-700">Lihat foto &amp; detail follow up</summary>
+                            <details class="border-t border-slate-200 px-3 py-2">
+                                <summary class="cursor-pointer text-xs font-bold text-primary-700">Foto &amp; detail follow up</summary>
                                 <div class="mt-3 grid grid-cols-3 gap-2">
                                     <?php foreach (['machine_picture', 'leak_location_picture', 'air_leak_image'] as $imageField): ?>
                                         <div>
@@ -881,120 +986,110 @@ try {
                                     <?php endif; ?>
                                 </div>
                             </details>
-                            <div class="flex flex-col gap-2 border-t border-slate-100 p-4 min-[420px]:flex-row">
+                            <div class="flex gap-1.5 border-t border-slate-200 p-2.5">
                                 <?php if (!empty($audit['finding_no'])): ?>
-                                    <a href="?answer=<?= rawurlencode((string)$audit['finding_no']) ?>#answer-finding" class="inline-flex flex-1 items-center justify-center rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm font-bold text-amber-700">Jawab</a>
+                                    <a href="?answer=<?= rawurlencode((string)$audit['finding_no']) ?>#answer-finding" class="inline-flex flex-1 items-center justify-center border border-amber-300 bg-amber-50 px-2 py-2 text-xs font-bold text-amber-700">Jawab</a>
                                 <?php endif; ?>
-                                <button type="button" data-edit-audit='<?= h(editAuditPayload($audit)) ?>' class="inline-flex flex-1 items-center justify-center rounded-md border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm font-bold text-sky-700">Edit</button>
-                                <button type="button" data-delete-audit data-audit-id="<?= h((string)$audit['id']) ?>" data-finding-no="<?= h((string)($audit['finding_no'] ?? 'Data lama')) ?>" class="inline-flex flex-1 items-center justify-center rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-sm font-bold text-red-700">Hapus</button>
+                                <button type="button" data-edit-audit='<?= h(editAuditPayload($audit)) ?>' class="inline-flex flex-1 items-center justify-center border border-sky-300 bg-sky-50 px-2 py-2 text-xs font-bold text-sky-700">Edit</button>
+                                <button type="button" data-delete-audit data-audit-id="<?= h((string)$audit['id']) ?>" data-finding-no="<?= h((string)($audit['finding_no'] ?? 'Data lama')) ?>" class="inline-flex flex-1 items-center justify-center border border-red-300 bg-red-50 px-2 py-2 text-xs font-bold text-red-700">Hapus</button>
                             </div>
                         </article>
                     <?php endforeach; ?>
                 </div>
 
-                <div class="hidden overflow-x-auto lg:block">
-                    <table class="min-w-[1960px] w-full border-collapse text-left text-sm">
+                <div class="hidden border border-slate-300 lg:block">
+                    <table class="w-full table-fixed border-collapse text-left text-xs">
+                        <colgroup>
+                            <col class="w-[12%]">
+                            <col class="w-[18%]">
+                            <col class="w-[14%]">
+                            <col class="w-[15%]">
+                            <col class="w-[16%]">
+                            <col class="w-[17%]">
+                            <col class="w-[8%]">
+                        </colgroup>
                         <thead>
-                            <tr class="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                                <th class="px-3 py-3">No. Temuan</th>
-                                <th class="px-3 py-3">Status</th>
-                                <th class="px-3 py-3">Date</th>
-                                <th class="px-3 py-3">Member</th>
-                                <th class="px-3 py-3">Plant</th>
-                                <th class="px-3 py-3">Line</th>
-                                <th class="px-3 py-3">Machine</th>
-                                <th class="px-3 py-3">PIC</th>
-                                <th class="px-3 py-3">Loss Flow</th>
-                                <th class="px-3 py-3">Loss Cost</th>
-                                <th class="px-3 py-3">Leak Location</th>
-                                <th class="px-3 py-3">CO₂</th>
-                                <th class="px-3 py-3">Machine Pict</th>
-                                <th class="px-3 py-3">Leak Location</th>
-                                <th class="px-3 py-3">Air Leak</th>
-                                <th class="px-3 py-3">Action Terakhir</th>
-                                <th class="px-3 py-3">PIC Action</th>
-                                <th class="px-3 py-3">Foto Perbaikan</th>
-                                <th class="px-3 py-3 text-center">Action</th>
+                            <tr class="border-b border-slate-300 bg-slate-100 text-[11px] font-bold uppercase tracking-wide text-slate-600">
+                                <th class="px-2 py-2">Temuan</th>
+                                <th class="px-2 py-2">Area / Mesin</th>
+                                <th class="px-2 py-2">Pelapor / PIC</th>
+                                <th class="px-2 py-2">Loss</th>
+                                <th class="px-2 py-2">Foto Temuan</th>
+                                <th class="px-2 py-2">Tindak Lanjut</th>
+                                <th class="px-2 py-2 text-center">Aksi</th>
                             </tr>
                         </thead>
-                        <tbody class="divide-y divide-slate-100">
+                        <tbody class="divide-y divide-slate-200">
                             <?php foreach ($audits as $audit): ?>
-                                <tr class="align-top hover:bg-sky-50/50">
-                                    <td class="px-3 py-3">
+                                <tr class="align-top hover:bg-slate-50">
+                                    <td class="px-2 py-2">
                                         <?php if (!empty($audit['finding_no'])): ?>
-                                            <div class="font-mono text-base font-black tracking-wider text-primary-700"><?= h((string)$audit['finding_no']) ?></div>
-                                            <a href="?answer=<?= rawurlencode((string)$audit['finding_no']) ?>#answer-finding" class="mt-1 inline-block text-xs font-semibold text-amber-700 hover:underline">Jawab</a>
+                                            <div class="font-mono text-sm font-black tracking-wider text-primary-700"><?= h((string)$audit['finding_no']) ?></div>
                                         <?php else: ?>
                                             <span class="text-xs text-slate-400">Data lama</span>
                                         <?php endif; ?>
-                                    </td>
-                                    <td class="px-3 py-3">
                                         <?php $isClosed = ($audit['status'] ?? 'OPEN') === 'CLOSED'; ?>
-                                        <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-bold <?= $isClosed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700' ?>">
+                                        <span class="mt-1 inline-flex border px-1.5 py-0.5 text-[10px] font-bold <?= $isClosed ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700' ?>">
                                             <?= $isClosed ? 'Closed' : 'Open' ?>
                                         </span>
+                                        <p class="mt-1 text-[11px] text-slate-500"><?= h((string)$audit['date_audit']) ?></p>
                                     </td>
-                                    <td class="px-3 py-3 font-medium text-slate-700"><?= h((string)$audit['date_audit']) ?></td>
-                                    <td class="px-3 py-3 text-slate-700"><?= h((string)$audit['member']) ?></td>
-                                    <td class="px-3 py-3 text-slate-700"><?= h((string)$audit['plant']) ?></td>
-                                    <td class="px-3 py-3 text-slate-700"><?= h((string)$audit['line']) ?></td>
-                                    <td class="px-3 py-3 text-slate-700"><?= h((string)$audit['machine_no']) ?></td>
-                                    <td class="px-3 py-3 text-slate-700"><?= h((string)$audit['pic_dept']) ?></td>
-                                    <td class="px-3 py-3 text-slate-700"><?= h(number_format((float)$audit['loss_flow'], 2)) ?></td>
-                                    <td class="px-3 py-3 text-slate-700">Rp <?= h(number_format((float)$audit['loss_cost'], 0, ',', '.')) ?></td>
-                                    <td class="max-w-xs whitespace-normal px-3 py-3 text-slate-700"><?= h((string)($audit['leak_location'] ?? '')) ?></td>
-                                    <td class="px-3 py-3 text-slate-700"><?= h(number_format((float)($audit['co2'] ?? 0), 2)) ?></td>
-                                    <?php foreach (['machine_picture', 'leak_location_picture', 'air_leak_image'] as $imageField): ?>
-                                        <td class="px-3 py-3">
+                                    <td class="px-2 py-2 text-slate-700">
+                                        <p class="font-bold text-slate-900"><?= h((string)$audit['machine_no']) ?></p>
+                                        <p class="mt-0.5"><?= h((string)$audit['plant']) ?> · <?= h((string)$audit['line']) ?></p>
+                                        <p class="mt-1 break-words text-[11px] text-slate-500"><?= h((string)($audit['leak_location'] ?? '')) ?></p>
+                                    </td>
+                                    <td class="px-2 py-2 text-slate-700">
+                                        <p class="font-semibold text-slate-900"><?= h((string)$audit['member']) ?></p>
+                                        <p class="mt-1 text-[11px] text-slate-500">PIC: <?= h((string)$audit['pic_dept']) ?></p>
+                                    </td>
+                                    <td class="px-2 py-2 text-slate-700">
+                                        <div class="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
+                                            <span class="text-slate-400">Flow</span><strong><?= h(number_format((float)$audit['loss_flow'], 2)) ?></strong>
+                                            <span class="text-slate-400">Cost</span><strong>Rp <?= h(number_format((float)$audit['loss_cost'], 0, ',', '.')) ?></strong>
+                                            <span class="text-slate-400">CO2</span><strong><?= h(number_format((float)($audit['co2'] ?? 0), 2)) ?></strong>
+                                        </div>
+                                    </td>
+                                    <td class="px-2 py-2">
+                                        <div class="flex gap-1">
+                                        <?php foreach (['machine_picture', 'leak_location_picture', 'air_leak_image'] as $imageField): ?>
                                             <?php $paths = imagePaths($audit[$imageField] ?? null); ?>
                                             <?php if ($paths): ?>
-                                                <div class="grid grid-cols-2 gap-2">
-                                                    <?php foreach ($paths as $index => $path): ?>
-                                                        <a href="<?= h($path) ?>" target="_blank" class="block">
-                                                            <img src="<?= h($path) ?>" alt="" class="h-16 w-20 rounded-md border border-slate-200 object-cover">
-                                                        </a>
-                                                    <?php endforeach; ?>
-                                                </div>
+                                                <a href="<?= h($paths[0]) ?>" target="_blank" class="relative block" title="<?= h($fields[$imageField][0]) ?>">
+                                                    <img src="<?= h($paths[0]) ?>" alt="" class="h-10 w-10 border border-slate-300 object-cover">
+                                                    <?php if (count($paths) > 1): ?><span class="absolute -right-1 -top-1 bg-slate-700 px-1 text-[9px] text-white">+<?= count($paths) - 1 ?></span><?php endif; ?>
+                                                </a>
                                             <?php else: ?>
-                                                <span class="text-xs text-slate-400">No image</span>
+                                                <span class="grid h-10 w-10 place-items-center border border-dashed border-slate-300 text-[9px] text-slate-400">-</span>
                                             <?php endif; ?>
-                                        </td>
-                                    <?php endforeach; ?>
-                                    <td class="max-w-xs px-3 py-3 text-slate-700">
+                                        <?php endforeach; ?>
+                                        </div>
+                                    </td>
+                                    <td class="px-2 py-2 text-slate-700">
                                         <?php if (!empty($audit['action_taken'])): ?>
-                                            <p class="whitespace-pre-wrap"><?= h((string)$audit['action_taken']) ?></p>
-                                            <p class="mt-1 text-xs text-slate-400"><?= h((string)$audit['action_created_at']) ?></p>
+                                            <p class="max-h-12 overflow-hidden whitespace-pre-wrap"><?= h((string)$audit['action_taken']) ?></p>
+                                            <p class="mt-1 text-[10px] text-slate-500"><?= h((string)$audit['action_pic']) ?> · <?= h((string)$audit['action_created_at']) ?></p>
+                                            <?php $actionPaths = imagePaths($audit['action_picture'] ?? null); ?>
+                                            <?php if ($actionPaths): ?><a href="<?= h($actionPaths[0]) ?>" target="_blank" class="mt-1 inline-block text-[10px] font-bold text-primary-700">Foto perbaikan</a><?php endif; ?>
                                         <?php else: ?>
-                                            <span class="text-xs text-slate-400">Belum dijawab</span>
+                                            <span class="text-[11px] text-slate-400">Belum dijawab</span>
                                         <?php endif; ?>
                                     </td>
-                                    <td class="px-3 py-3 text-slate-700"><?= !empty($audit['action_pic']) ? h((string)$audit['action_pic']) : '<span class="text-xs text-slate-400">-</span>' ?></td>
-                                    <td class="px-3 py-3">
-                                        <?php $actionPaths = imagePaths($audit['action_picture'] ?? null); ?>
-                                        <?php if ($actionPaths): ?>
-                                            <div class="grid grid-cols-2 gap-2">
-                                                <?php foreach ($actionPaths as $path): ?>
-                                                    <a href="<?= h($path) ?>" target="_blank" class="block">
-                                                        <img src="<?= h($path) ?>" alt="Foto hasil perbaikan" class="h-16 w-20 rounded-md border border-slate-200 object-cover">
-                                                    </a>
-                                                <?php endforeach; ?>
-                                            </div>
-                                        <?php else: ?>
-                                            <span class="text-xs text-slate-400">No image</span>
+                                    <td class="px-1.5 py-2 text-center">
+                                        <?php if (!empty($audit['finding_no'])): ?>
+                                            <a href="?answer=<?= rawurlencode((string)$audit['finding_no']) ?>#answer-finding" class="mb-1 block border border-amber-300 bg-amber-50 px-1 py-1.5 text-[10px] font-bold text-amber-700">Jawab</a>
                                         <?php endif; ?>
-                                    </td>
-                                    <td class="px-3 py-3 text-center">
                                         <button
                                             type="button"
                                             data-edit-audit='<?= h(editAuditPayload($audit)) ?>'
-                                            class="mb-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-bold text-sky-700 transition hover:border-sky-300 hover:bg-sky-100"
+                                            class="mb-1 block w-full border border-sky-300 bg-sky-50 px-1 py-1.5 text-[10px] font-bold text-sky-700 hover:bg-sky-100"
                                         >Edit</button>
                                         <button
                                             type="button"
                                             data-delete-audit
                                             data-audit-id="<?= h((string)$audit['id']) ?>"
                                             data-finding-no="<?= h((string)($audit['finding_no'] ?? 'Data lama')) ?>"
-                                            class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 transition hover:border-red-300 hover:bg-red-100"
+                                            class="block w-full border border-red-300 bg-red-50 px-1 py-1.5 text-[10px] font-bold text-red-700 hover:bg-red-100"
                                         >Hapus</button>
                                     </td>
                                 </tr>
@@ -1007,23 +1102,23 @@ try {
                     <div class="mt-4 flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
                         <p class="text-sm text-slate-500">Page <?= h((string)$currentPage) ?> of <?= h((string)$totalPages) ?></p>
                         <div class="flex flex-wrap gap-2">
-                            <a href="?page=<?= max(1, $currentPage - 1) ?>" class="<?= $currentPage <= 1 ? 'pointer-events-none opacity-40' : '' ?> rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">Prev</a>
+                            <a href="<?= h(auditPageUrl(max(1, $currentPage - 1), $filterQuery)) ?>" class="<?= $currentPage <= 1 ? 'pointer-events-none opacity-40' : '' ?> border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">Prev</a>
                             <?php
                                 $startPage = max(1, $currentPage - 2);
                                 $endPage = min($totalPages, $currentPage + 2);
                             ?>
                             <?php if ($startPage > 1): ?>
-                                <a href="?page=1" class="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">1</a>
+                                <a href="<?= h(auditPageUrl(1, $filterQuery)) ?>" class="border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">1</a>
                                 <?php if ($startPage > 2): ?><span class="px-2 py-2 text-sm text-slate-400">...</span><?php endif; ?>
                             <?php endif; ?>
                             <?php for ($page = $startPage; $page <= $endPage; $page++): ?>
-                                <a href="?page=<?= $page ?>" class="<?= $page === $currentPage ? 'border-primary-600 bg-primary-600 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50' ?> rounded-md border px-3 py-2 text-sm font-semibold"><?= $page ?></a>
+                                <a href="<?= h(auditPageUrl($page, $filterQuery)) ?>" class="<?= $page === $currentPage ? 'border-primary-600 bg-primary-600 text-white' : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50' ?> border px-2.5 py-1.5 text-xs font-semibold"><?= $page ?></a>
                             <?php endfor; ?>
                             <?php if ($endPage < $totalPages): ?>
                                 <?php if ($endPage < $totalPages - 1): ?><span class="px-2 py-2 text-sm text-slate-400">...</span><?php endif; ?>
-                                <a href="?page=<?= $totalPages ?>" class="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"><?= $totalPages ?></a>
+                                <a href="<?= h(auditPageUrl($totalPages, $filterQuery)) ?>" class="border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"><?= $totalPages ?></a>
                             <?php endif; ?>
-                            <a href="?page=<?= min($totalPages, $currentPage + 1) ?>" class="<?= $currentPage >= $totalPages ? 'pointer-events-none opacity-40' : '' ?> rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">Next</a>
+                            <a href="<?= h(auditPageUrl(min($totalPages, $currentPage + 1), $filterQuery)) ?>" class="<?= $currentPage >= $totalPages ? 'pointer-events-none opacity-40' : '' ?> border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">Next</a>
                         </div>
                     </div>
                 <?php endif; ?>
